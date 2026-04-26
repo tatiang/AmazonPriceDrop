@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Amazon Price Drops</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+<div class="topline">
+        <img class="logo" src="icons/icon48.png" alt="" />
+        <div class="title">Amazon Price Drops</div>
+      </div>
+      <div class="subtitle">Highlight drops by percentage</div>
+      <div id="version" class="version"></div>
+      Highlight drops by percentage</div>
+    </header>
+
+    <main>
+      <label class="row">
+        <span>Threshold</span>
+        <input id="threshold" type="number" min="1" max="99" step="1" />
+        <span class="suffix">%</span>
+      </label>
+
+      <label class="row">
+        <span>Auto-highlight</span>
+        <input id="auto" type="checkbox" />
+      </label>
+
+      <div class="buttons">
+        <button id="scan" class="primary">Scan this page</button>
+        <button id="clear">Clear highlights</button>
+      </div>
+
+      <div id="status" class="status" aria-live="polite"></div>
+
+      </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

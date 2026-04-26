@@ -1,0 +1,150 @@
+/* Amazon Price Drop Finder extension v1.06 */
+.apdf-highlight {
+  /* Outline can get clipped by Amazon containers; use visible fill + underline too */
+  background: rgba(90, 162, 255, 0.16) !important;
+  outline: 2px solid rgba(90, 162, 255, 0.9) !important;
+  box-shadow: 0 0 0 3px rgba(90, 162, 255, 0.18) !important;
+  border-radius: 8px !important;
+}
+
+.apdf-highlight-link,
+.apdf-highlight-link:visited {
+  background: rgba(90, 162, 255, 0.22) !important;
+  border-radius: 6px !important;
+  padding: 2px 4px !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
+#apdf-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: 60vh;
+  overflow: hidden;
+  z-index: 2147483647;
+  color: #e9eefc;
+  background: rgba(11, 15, 25, 0.98);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgba(0,0,0,0.45);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+#apdf-panel header {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 10px;
+  padding: 12px 12px 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+}
+
+#apdf-panel .title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+}
+
+#apdf-panel .meta {
+  margin-top: 3px;
+  color: rgba(233, 238, 252, 0.72);
+  font-size: 12px;
+}
+
+#apdf-panel button {
+  appearance:none;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: #e9eefc;
+  border-radius: 12px;
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#apdf-panel .content {
+  padding: 10px 12px 12px 12px;
+  overflow: auto;
+  max-height: calc(60vh - 48px);
+}
+
+#apdf-panel .item {
+  padding: 10px 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.05);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+#apdf-panel .item:last-child { margin-bottom: 0; }
+
+#apdf-panel .name {
+  font-size: 12.5px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+#apdf-panel .line {
+  display:flex;
+  justify-content:space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(233, 238, 252, 0.82);
+}
+
+#apdf-panel .pct {
+  font-weight: 750;
+}
+
+#apdf-panel .empty {
+  color: rgba(233, 238, 252, 0.72);
+  font-size: 12px;
+  padding: 8px 2px;
+}
+
+
+/* Button inside the floating panel */
+#apdf-panel .apdf-add{
+  margin-top:8px;
+  padding:7px 10px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.08);
+  color:rgba(233,238,252,0.95);
+  cursor:pointer;
+  font-weight:600;
+  width:fit-content;
+}
+#apdf-panel .apdf-add:hover{ background:rgba(255,255,255,0.12); }
+#apdf-panel .apdf-add[disabled]{ opacity:0.55; cursor:not-allowed; }
+
+
+/* v1.09 panel header logo + gear */
+#apdf-panel .apdf-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+#apdf-panel .apdf-logo{
+  width:18px;
+  height:18px;
+  border-radius:5px;
+}
+#apdf-panel .apdf-gear{
+  margin-left:auto;
+  margin-right:6px;
+  width:28px;
+  height:28px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.06);
+  color:rgba(233,238,252,0.92);
+  cursor:pointer;
+  font-size:15px;
+  line-height:26px;
+  padding:0;
+}
+#apdf-panel .apdf-gear:hover{ background:rgba(255,255,255,0.10); }

@@ -1,0 +1,129 @@
+:root{
+  --bg:#0b0f19;
+  --card:#121a2b;
+  --text:#e9eefc;
+  --muted:#a9b5d6;
+  --accent:#5aa2ff;
+  --border:rgba(255,255,255,0.10);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  width:320px;
+  font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color:var(--text);
+  background:var(--bg);
+}
+header{
+  padding:14px 14px 10px 14px;
+  border-bottom:1px solid var(--border);
+}
+.title{
+  font-weight:650;
+  font-size:14px;
+  letter-spacing:0.2px;
+}
+.subtitle{
+  margin-top:4px;
+  color:var(--muted);
+  font-size:12px;
+}
+main{
+  padding:12px 14px 14px 14px;
+}
+.row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 10px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:12px;
+  margin-bottom:10px;
+}
+.row input[type="number"]{
+  width:72px;
+  padding:6px 8px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.06);
+  color:var(--text);
+}
+.suffix{ color:var(--muted); }
+.buttons{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+  margin-top:10px;
+}
+button{
+  padding:9px 10px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.06);
+  color:var(--text);
+  cursor:pointer;
+}
+button.primary{
+  background:var(--accent);
+  border-color: transparent;
+  color:#041125;
+  font-weight:650;
+}
+button:active{ transform:translateY(1px); }
+.hint{
+  margin:12px 2px 0 2px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+
+.topline{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:10px;
+}
+.ver{
+  color:rgba(233,238,252,0.72);
+  font-size:12px;
+  font-weight:600;
+}
+.status{
+  margin-top:10px;
+  padding:10px 10px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.04);
+  color:var(--muted);
+  font-size:12px;
+  min-height: 18px;
+}
+.status.good{ color: rgba(233,238,252,0.90); }
+.status.bad{ color: rgba(255, 180, 180, 0.95); }
+
+
+.version {
+  font-size: 11px;
+  opacity: 0.6;
+  text-align: right;
+  margin-top: 6px;
+}
+
+
+
+
+/* v1.09 header logo */
+.logo{
+  width:22px;
+  height:22px;
+  border-radius:6px;
+  display:block;
+}
+.topline{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}

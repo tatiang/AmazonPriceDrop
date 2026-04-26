@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Amazon Price Drop Finder (\u226510%)",
+  "version": "1.09",
+  "description": "On Amazon cart/saved items pages, highlights items that dropped by at least a chosen percentage and lists them in a panel.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://amazon.com/*",
+    "https://smile.amazon.com/*",
+    "https://www.amazon.com/*"
+  ],
+  "action": {
+    "default_title": "Find price drops",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.amazon.com/*cart*",
+        "https://www.amazon.com/gp/cart/*",
+        "https://www.amazon.com/cart/*",
+        "https://smile.amazon.com/*cart*",
+        "https://smile.amazon.com/gp/cart/*",
+        "https://smile.amazon.com/cart/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
