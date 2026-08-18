@@ -1,43 +1,66 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Amazon Price Drops</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <header>
-<div class="topline">
-        <img class="logo" src="icons/icon48.png" alt="" />
-        <div class="title">Amazon Price Drops</div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amazon Price Drop Finder</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img class="logo" src="icons/icon48.png" alt="" />
+      <div>
+        <div class="title">Amazon Price Drop Finder</div>
+        <div class="subtitle">Show only meaningful price decreases</div>
       </div>
-      <div class="subtitle">Highlight drops by percentage</div>
-      <div id="version" class="version"></div>
-      Highlight drops by percentage</div>
-    </header>
+    </div>
+    <div id="version" class="version"></div>
+  </header>
 
-    <main>
-      <label class="row">
-        <span>Threshold</span>
-        <input id="threshold" type="number" min="1" max="99" step="1" />
-        <span class="suffix">%</span>
-      </label>
+  <main>
+    <section class="settings-card" aria-label="Price drop filters">
+      <div class="setting">
+        <div>
+          <label for="threshold" class="setting-title">Minimum percentage decrease</label>
+          <div class="setting-help">The item must decrease by at least this percentage.</div>
+        </div>
+        <div class="input-wrap">
+          <input id="threshold" type="number" min="0" max="99" step="1" inputmode="numeric" />
+          <span>%</span>
+        </div>
+      </div>
 
-      <label class="row">
-        <span>Auto-highlight</span>
+      <div class="and-divider"><span>AND</span></div>
+
+      <div class="setting">
+        <div>
+          <label for="minDollarDrop" class="setting-title">Minimum dollar decrease</label>
+          <div class="setting-help">The item must also decrease by at least this amount.</div>
+        </div>
+        <div class="input-wrap money">
+          <span>$</span>
+          <input id="minDollarDrop" type="number" min="0" step="0.01" inputmode="decimal" />
+        </div>
+      </div>
+
+      <div class="setting toggle-setting">
+        <div>
+          <label for="auto" class="setting-title">Auto-highlight</label>
+          <div class="setting-help">Scan automatically when an Amazon cart page opens.</div>
+        </div>
         <input id="auto" type="checkbox" />
-      </label>
-
-      <div class="buttons">
-        <button id="scan" class="primary">Scan this page</button>
-        <button id="clear">Clear highlights</button>
       </div>
+    </section>
 
-      <div id="status" class="status" aria-live="polite"></div>
+    <div class="buttons">
+      <button id="scan" class="primary">Scan this page</button>
+      <button id="clear" class="secondary">Clear highlights</button>
+    </div>
 
-      </main>
+    <div id="status" class="status" aria-live="polite"></div>
+  </main>
 
-    <script src="popup.js"></script>
-  </body>
+  <script src="popup.js"></script>
+</body>
 </html>
