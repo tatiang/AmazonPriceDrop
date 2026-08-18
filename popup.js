@@ -1,5 +1,9 @@
-// Amazon Price Drop Finder popup v1.09
-const DEFAULTS = { threshold: 10, autoHighlight: true };
+// Amazon Price Drop Finder popup v1.10
+const DEFAULTS = {
+  threshold: 10,
+  minDollarDrop: 0,
+  autoHighlight: true
+};
 
 function getActiveTab() {
   return new Promise((resolve) => {
@@ -7,172 +11,161 @@ function getActiveTab() {
   });
 }
 
-function storageGet(keys) {
-  return new Promise((resolve) => chrome.storage.sync.get(keys, resolve));
+function storageGet(defaults) {
+  return new Promise((resolve) => chrome.storage.sync.get(defaults, resolve));
 }
 
-function storageSet(obj) {
-  return new Promise((resolve) => chrome.storage.sync.set(obj, resolve));
+function storageSet(values) {
+  return new Promise((resolve) => chrome.storage.sync.set(values, resolve));
+}
+
+function sendMessageToTab(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(err);
+      else resolve(response);
+    });
+  });
+}
+
+async function ensureContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js']
+  });
 }
 
 function isAmazonCartUrl(url) {
   if (!url) return false;
   try {
     const u = new URL(url);
-    const hostOk = /(^|\.)amazon\.com$/.test(u.hostname);
+    const hostOk = /(^|\.)amazon\.com$/i.test(u.hostname);
     const path = u.pathname || '';
-    // Common cart pages:
-    const pathOk = path.includes('/gp/cart/view') || path.includes('/cart/');
-    return hostOk && pathOk;
+    return hostOk && (
+      path.includes('/gp/cart/view') ||
+      path.includes('/gp/cart/') ||
+      path.includes('/cart/')
+    );
   } catch {
     return false;
   }
 }
 
-function sendMessageToTab(tabId, message) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, (resp) => {
-      const err = chrome.runtime.lastError;
-      if (err) reject(err);
-      else resolve(resp);
-    });
-  });
+function normalizeSettings(raw) {
+  const threshold = Math.max(0, Math.min(99, Number(raw.threshold ?? DEFAULTS.threshold)));
+  const minDollarDrop = Math.max(0, Number(raw.minDollarDrop ?? DEFAULTS.minDollarDrop));
+  return {
+    threshold: Number.isFinite(threshold) ? threshold : DEFAULTS.threshold,
+    minDollarDrop: Number.isFinite(minDollarDrop) ? minDollarDrop : DEFAULTS.minDollarDrop,
+    autoHighlight: Boolean(raw.autoHighlight)
+  };
 }
 
-async function ensureContentScript(tabId) {
-  // Inject content.js if the page didn't already have it (e.g., after an update, or site access toggles).
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['content.js'],
+async function saveSettingsFromUI() {
+  const thresholdEl = document.getElementById('threshold');
+  const minDollarEl = document.getElementById('minDollarDrop');
+  const autoEl = document.getElementById('auto');
+
+  const settings = normalizeSettings({
+    threshold: thresholdEl.value,
+    minDollarDrop: minDollarEl.value,
+    autoHighlight: autoEl.checked
   });
+
+  thresholdEl.value = settings.threshold;
+  minDollarEl.value = settings.minDollarDrop.toFixed(2);
+  await storageSet(settings);
+  return settings;
+}
+
+async function sendWithRetry(tabId, message) {
+  try {
+    return await sendMessageToTab(tabId, message);
+  } catch (err) {
+    const text = String(err?.message || err);
+    if (!text.includes('Receiving end does not exist')) throw err;
+    await ensureContentScript(tabId);
+    return await sendMessageToTab(tabId, message);
+  }
 }
 
 function setVersion() {
-  const v = chrome.runtime.getManifest().version;
   const el = document.getElementById('version');
-  if (el) el.textContent = `v${v}`;
+  if (el) el.textContent = `v${chrome.runtime.getManifest().version}`;
 }
 
 async function init() {
   setVersion();
 
-  const statusEl = document.getElementById('status');
+  const thresholdEl = document.getElementById('threshold');
+  const minDollarEl = document.getElementById('minDollarDrop');
+  const autoEl = document.getElementById('auto');
   const scanBtn = document.getElementById('scan');
   const clearBtn = document.getElementById('clear');
-  const thresholdEl = document.getElementById('threshold');
+  const statusEl = document.getElementById('status');
 
-  // If opened from the in-page panel gear, focus settings
-  try {
-    const params = new URLSearchParams(location.search);
-    if (params.get('settings') === '1') {
-      // Focus the threshold field so it's immediately editable
-      setTimeout(() => {
-        const t = document.getElementById('threshold');
-        if (t) t.focus();
-      }, 50);
-    }
-  } catch {}
+  const saved = normalizeSettings({ ...DEFAULTS, ...(await storageGet(DEFAULTS)) });
+  thresholdEl.value = saved.threshold;
+  minDollarEl.value = saved.minDollarDrop.toFixed(2);
+  autoEl.checked = saved.autoHighlight;
 
-  const autoEl = document.getElementById('auto');
-const { threshold, autoHighlight } = { ...DEFAULTS, ...(await storageGet(DEFAULTS)) };
-  thresholdEl.value = threshold;
-  autoEl.checked = autoHighlight;
+  for (const el of [thresholdEl, minDollarEl, autoEl]) {
+    el.addEventListener('change', saveSettingsFromUI);
+  }
 
-  thresholdEl.addEventListener('change', async () => {
-    const v = Math.max(1, Math.min(99, Number(thresholdEl.value || DEFAULTS.threshold)));
-    thresholdEl.value = v;
-    await storageSet({ threshold: v });
-  });
+  const params = new URLSearchParams(location.search);
+  if (params.get('settings') === '1') {
+    setTimeout(() => thresholdEl.focus(), 50);
+  }
 
-  autoEl.addEventListener('change', async () => {
-    await storageSet({ autoHighlight: autoEl.checked });
-  });
-
-  async function doScan() {
+  scanBtn.addEventListener('click', async () => {
     const tab = await getActiveTab();
-    if (!tab?.id) return;
-
-    if (!isAmazonCartUrl(tab.url)) {
-      statusEl.textContent = "Not an Amazon cart page.";
-      statusEl.className = "status";
+    if (!tab?.id || !isAmazonCartUrl(tab.url)) {
+      statusEl.textContent = 'Open an Amazon cart page to scan.';
+      statusEl.className = 'status error';
       return;
     }
 
-    statusEl.textContent = "Scanning…";
-    statusEl.className = "status working";
+    const settings = await saveSettingsFromUI();
+    statusEl.textContent = 'Scanning…';
+    statusEl.className = 'status working';
     scanBtn.disabled = true;
 
     try {
-      // Try normal messaging first
-      let resp = await sendMessageToTab(tab.id, { type: 'APDF_SCAN' });
-
-      // If no response (rare), still show completion
-      if (resp?.ok) {
-        statusEl.textContent = `Scan complete — ${resp.qualifying} item(s) ≥${resp.threshold}% (scanned ${resp.scanned})`;
-        statusEl.className = "status done";
-      } else {
-        statusEl.textContent = "Scan complete (no response).";
-        statusEl.className = "status done";
-      }
-    } catch (err) {
-      // Typical error: "Could not establish connection. Receiving end does not exist."
-      const msg = String(err?.message || err);
-      if (msg.includes("Receiving end does not exist")) {
-        try {
-          await ensureContentScript(tab.id);
-          const resp2 = await sendMessageToTab(tab.id, { type: 'APDF_SCAN' });
-          if (resp2?.ok) {
-            statusEl.textContent = `Scan complete — ${resp2.qualifying} item(s) ≥${resp2.threshold}% (scanned ${resp2.scanned})`;
-            statusEl.className = "status done";
-            return;
-          }
-        } catch (err2) {
-          // fall through
-        }
-        statusEl.textContent = "Couldn’t scan. Make sure site access is allowed for amazon.com.";
-        statusEl.className = "status";
-        return;
-      }
-
-      statusEl.textContent = "Couldn’t scan. Check site access for amazon.com.";
-      statusEl.className = "status";
+      const resp = await sendWithRetry(tab.id, { type: 'APDF_SCAN' });
+      if (!resp?.ok) throw new Error(resp?.error || 'No response from page.');
+      statusEl.textContent =
+        `Found ${resp.qualifying} item(s): ≥${settings.threshold}% AND ≥$${settings.minDollarDrop.toFixed(2)}.`;
+      statusEl.className = 'status done';
+    } catch {
+      statusEl.textContent = 'Couldn’t scan. Check Amazon site access and refresh the cart page.';
+      statusEl.className = 'status error';
     } finally {
       scanBtn.disabled = false;
     }
-  }
+  });
 
-  async function doClear() {
+  clearBtn.addEventListener('click', async () => {
     const tab = await getActiveTab();
-    if (!tab?.id) return;
+    if (!tab?.id || !isAmazonCartUrl(tab.url)) {
+      statusEl.textContent = 'Open an Amazon cart page first.';
+      statusEl.className = 'status error';
+      return;
+    }
 
-    statusEl.textContent = "Clearing highlights…";
-    statusEl.className = "status working";
     clearBtn.disabled = true;
-
     try {
-      await sendMessageToTab(tab.id, { type: 'APDF_CLEAR' });
-      statusEl.textContent = "Idle";
-      statusEl.className = "status";
-    } catch (err) {
-      const msg = String(err?.message || err);
-      if (msg.includes("Receiving end does not exist")) {
-        try {
-          await ensureContentScript(tab.id);
-          await sendMessageToTab(tab.id, { type: 'APDF_CLEAR' });
-          statusEl.textContent = "Idle";
-          statusEl.className = "status";
-          return;
-        } catch {}
-      }
-      statusEl.textContent = "Couldn’t clear. Make sure you’re on an Amazon cart page.";
-      statusEl.className = "status";
+      await sendWithRetry(tab.id, { type: 'APDF_CLEAR' });
+      statusEl.textContent = 'Highlights cleared.';
+      statusEl.className = 'status';
+    } catch {
+      statusEl.textContent = 'Couldn’t clear highlights.';
+      statusEl.className = 'status error';
     } finally {
       clearBtn.disabled = false;
     }
-  }
-
-  scanBtn.addEventListener('click', doScan);
-  clearBtn.addEventListener('click', doClear);
+  });
 }
 
 init();
