@@ -1,202 +1,306 @@
-// Amazon Price Drop Finder extension v1.09
+// Amazon Price Drop Finder extension v1.10
 (() => {
-  // Prevent duplicate injections from creating duplicate panels/observers
-  if (window.__apdfAlreadyLoaded) return;
-  window.__apdfAlreadyLoaded = true;
-  const DEFAULTS = { threshold: 10, autoHighlight: true };
-  const PANEL_ID = 'apdf-panel';
-  const HIGHLIGHT_CLASS = 'apdf-highlight';
+  // One content-script instance per document/page load.
+  if (window.__APDF_V110_LOADED__) return;
+  window.__APDF_V110_LOADED__ = true;
 
-  function storageGet(keys) {
-    return new Promise((resolve) => chrome.storage.sync.get(keys, resolve));
+  const DEFAULTS = {
+    threshold: 10,
+    minDollarDrop: 0,
+    autoHighlight: true
+  };
+
+  const PANEL_ID = 'apdf-panel';
+  let panelHasAppearedThisPage = false;
+  let rescanTimer = null;
+
+  const DROP_REGEX =
+    /(.*?)\s+has\s+decreased\s+from\s+\$?\s*([\d,.]+)\s+to\s+\$?\s*([\d,.]+)/i;
+
+  function storageGet(defaults) {
+    return new Promise((resolve) => chrome.storage.sync.get(defaults, resolve));
   }
 
-  function moneyToNumber(s) {
-    if (!s) return null;
-    const cleaned = String(s).replace(/[^0-9.]/g, '');
-    if (!cleaned) return null;
-    const n = Number(cleaned);
+  function normalizeSettings(raw) {
+    const threshold = Math.max(0, Math.min(99, Number(raw.threshold ?? DEFAULTS.threshold)));
+    const minDollarDrop = Math.max(0, Number(raw.minDollarDrop ?? DEFAULTS.minDollarDrop));
+
+    return {
+      threshold: Number.isFinite(threshold) ? threshold : DEFAULTS.threshold,
+      minDollarDrop: Number.isFinite(minDollarDrop) ? minDollarDrop : DEFAULTS.minDollarDrop,
+      autoHighlight: Boolean(raw.autoHighlight)
+    };
+  }
+
+  function moneyToNumber(value) {
+    const n = Number(String(value ?? '').replace(/[^0-9.]/g, ''));
     return Number.isFinite(n) ? n : null;
   }
 
-  function fmtMoney(n) {
-    try {
-      return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
-    } catch {
-      return `$${n.toFixed(2)}`;
-    }
+  function fmtMoney(value) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(value);
   }
 
-  const DROP_REGEX = /(.*?)\s+has\s+decreased\s+from\s+\$?\s*([\d,.]+)\s+to\s+\$?\s*([\d,.]+)/i;
-
   function computeDropFromText(text) {
-    const t = (text || '').replace(/\s+/g, ' ').trim();
-    if (!/has\s+decreased\s+from/i.test(t)) return null;
-    const m = t.match(DROP_REGEX);
-    if (!m) return null;
-    const name = (m[1] || '').trim();
-    const oldPrice = moneyToNumber(m[2]);
-    const newPrice = moneyToNumber(m[3]);
-    if (!oldPrice || !newPrice || oldPrice <= 0) return null;
-    const pct = ((oldPrice - newPrice) / oldPrice) * 100;
-    if (pct <= 0) return null; // never treat increases/flat as decreases
-    return { name: name || 'Unknown item', oldPrice, newPrice, pct };
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+
+    // Hard guard: increases never enter the candidate set.
+    if (!/\bhas\s+decreased\s+from\b/i.test(normalized)) return null;
+    if (/\bhas\s+increased\s+from\b/i.test(normalized)) return null;
+
+    const match = normalized.match(DROP_REGEX);
+    if (!match) return null;
+
+    const oldPrice = moneyToNumber(match[2]);
+    const newPrice = moneyToNumber(match[3]);
+    if (oldPrice === null || newPrice === null || oldPrice <= 0) return null;
+    if (newPrice >= oldPrice) return null;
+
+    const dollarDrop = oldPrice - newPrice;
+    const pct = (dollarDrop / oldPrice) * 100;
+
+    return {
+      name: (match[1] || 'Unknown item').trim(),
+      oldPrice,
+      newPrice,
+      dollarDrop,
+      pct
+    };
   }
 
   function extractAsinFromUrl(url) {
-    if (!url) return null;
-    const m = String(url).match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
-    return m ? m[1].toUpperCase() : null;
+    const match = String(url || '').match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+    return match ? match[1].toUpperCase() : null;
   }
 
-  function findImportantMessagesContainer() {
-    const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,div,span')).filter(el => {
-      const t = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      return t.includes('important messages') && t.includes('cart');
-    });
-
-    for (const h of headings) {
-      const box = h.closest('div');
-      if (!box) continue;
-      const ul = box.querySelector('ul');
-      if (ul && ul.querySelector('li')) return box;
-      const nextUl = box.parentElement?.querySelector('ul');
-      if (nextUl && nextUl.querySelector('li')) return box.parentElement;
-    }
-
-    const candidate = Array.from(document.querySelectorAll('div')).find(div => {
-      const t = (div.textContent || '').toLowerCase();
-      return t.includes('important messages about items in your cart') && div.querySelector('li');
-    });
-
-    return candidate || null;
-  }
-
-  function scanFromImportantMessages() {
+  function findImportantMessageLines() {
+    // Prefer exact list items. Do not style their parent container.
+    const listItems = Array.from(document.querySelectorAll('li'));
     const results = [];
-    const container = findImportantMessagesContainer();
-    if (!container) return results;
 
-    const listItems = Array.from(container.querySelectorAll('li'));
     for (const li of listItems) {
       const drop = computeDropFromText(li.textContent || '');
       if (!drop) continue;
 
-      const link = li.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
-      const asin = extractAsinFromUrl(link?.getAttribute('href') || '');
+      const productLink = li.querySelector('a[href*="/dp/"], a[href*="/gp/product/"], a');
+      const asin = extractAsinFromUrl(productLink?.getAttribute('href'));
 
-      results.push({ ...drop, element: li, asin });
+      results.push({
+        ...drop,
+        element: li,
+        productLink,
+        asin
+      });
     }
-    return results;
+
+    return dedupeResults(results);
   }
 
-  function scanViaFallbackText() {
+  function findFallbackLines() {
+    // Only use relatively small elements so we never highlight a large container
+    // containing a mix of increases and decreases.
+    const candidates = Array.from(document.querySelectorAll('p, span, div'))
+      .filter((el) => (el.textContent || '').length < 1200);
+
     const results = [];
-    const seen = new WeakSet();
-
-    const candidates = [
-      ...document.querySelectorAll('li'),
-      ...document.querySelectorAll('div, span, p')
-    ];
-
     for (const el of candidates) {
-      if (!el || seen.has(el)) continue;
-      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!txt || !txt.toLowerCase().includes('has decreased from')) continue;
+      const drop = computeDropFromText(el.textContent || '');
+      if (!drop) continue;
 
-      const computed = computeDropFromText(txt);
-      if (!computed) continue;
+      // Skip any candidate whose child already contains a price-decrease sentence.
+      const childMatch = Array.from(el.children).some((child) =>
+        computeDropFromText(child.textContent || '')
+      );
+      if (childMatch) continue;
 
-      const highlightEl = el.closest('li') || el;
-      if (highlightEl && seen.has(highlightEl)) continue;
-      if (highlightEl) seen.add(highlightEl);
-
-      results.push({ ...computed, element: highlightEl, asin: null });
+      const productLink = el.querySelector('a[href*="/dp/"], a[href*="/gp/product/"], a');
+      results.push({
+        ...drop,
+        element: el,
+        productLink,
+        asin: extractAsinFromUrl(productLink?.getAttribute('href'))
+      });
     }
 
-    return results;
+    return dedupeResults(results);
   }
 
-  
-  function findMoveToCartButton(root) {
-    if (!root) return null;
-    // Common patterns Amazon uses for moving Saved-for-later items into cart
-    return root.querySelector(
-      'input[value*="Move to Cart"], input[value*="Add to Cart"], ' +
-      'button[aria-label*="Move to Cart"], button[aria-label*="Add to Cart"], ' +
-      'input[name*="submit.move-to-cart"], input[name*="moveToCart"], ' +
-      'button[name*="move-to-cart"], button[data-action*="move-to-cart"]'
+  function dedupeResults(results) {
+    const seen = new Set();
+    return results.filter((item) => {
+      const key = `${item.name}|${item.oldPrice}|${item.newPrice}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function qualifies(item, settings) {
+    return (
+      item.newPrice < item.oldPrice &&
+      item.pct >= settings.threshold &&
+      item.dollarDrop >= settings.minDollarDrop
     );
   }
 
-  function highlightMatchingCartItemByAsin(asin) {
+  function findMoveToCartButton(root) {
+    if (!root) return null;
+
+    const direct = root.querySelector(
+      [
+        'input[value*="Move to Cart" i]',
+        'input[value*="Add to Cart" i]',
+        'button[aria-label*="Move to Cart" i]',
+        'button[aria-label*="Add to Cart" i]',
+        'input[name*="move-to-cart" i]',
+        'input[name*="moveToCart" i]',
+        'button[name*="move-to-cart" i]',
+        'button[data-action*="move-to-cart" i]'
+      ].join(',')
+    );
+    if (direct) return direct;
+
+    return Array.from(root.querySelectorAll('button, input[type="submit"], a'))
+      .find((el) =>
+        /^(move to cart|add to cart)$/i.test((el.textContent || el.value || '').trim())
+      ) || null;
+  }
+
+  function findSavedItemRowByAsin(asin) {
     if (!asin) return null;
-    const link = document.querySelector(`a[href*="/dp/${asin}"], a[href*="/gp/product/${asin}"]`);
-    if (!link) return null;
 
-    const cartRow =
-      link.closest('[data-itemid]') ||
-      link.closest('[data-asin]') ||
-      link.closest('.sc-list-item') ||
-      link.closest('.sc-item') ||
-      link.closest('div');
+    const links = Array.from(
+      document.querySelectorAll(
+        `a[href*="/dp/${asin}"], a[href*="/gp/product/${asin}"]`
+      )
+    );
 
-    return cartRow || link;
+    for (const link of links) {
+      const row =
+        link.closest('.sc-list-item') ||
+        link.closest('[data-itemid]') ||
+        link.closest('[data-asin]') ||
+        link.closest('.sc-item');
+
+      if (!row) continue;
+      if (findMoveToCartButton(row)) return row;
+    }
+
+    return null;
   }
 
-  function clearHighlights() {
-    document.querySelectorAll('.' + HIGHLIGHT_CLASS).forEach(el => el.classList.remove(HIGHLIGHT_CLASS));
-    document.querySelectorAll('.apdf-highlight-link').forEach(el => el.classList.remove('apdf-highlight-link'));
-    const panel = document.getElementById(PANEL_ID);
-    if (panel) panel.remove();
+  function clearHighlightClasses() {
+    document.querySelectorAll('.apdf-match').forEach((el) =>
+      el.classList.remove('apdf-match')
+    );
+    document.querySelectorAll('.apdf-highlight-link').forEach((el) =>
+      el.classList.remove('apdf-highlight-link')
+    );
   }
 
-  function removeDuplicatePanels() {
-    const panels = document.querySelectorAll('#' + PANEL_ID);
-    if (panels.length > 1) {
-      panels.forEach((p, idx) => { if (idx > 0) p.remove(); });
+  function clearHighlights({ removePanel = true } = {}) {
+    clearHighlightClasses();
+    if (removePanel) document.getElementById(PANEL_ID)?.remove();
+  }
+
+  function decorateQualifyingItems(items) {
+    clearHighlightClasses();
+
+    for (const item of items) {
+      // Exact price-change line only.
+      item.element?.classList.add('apdf-match');
+      item.productLink?.classList.add('apdf-highlight-link');
+
+      // Find Saved-for-later row only for the Add-to-cart action.
+      // Do not broadly color the cart row.
+      item.savedRow = findSavedItemRowByAsin(item.asin);
     }
   }
 
-  function createOrUpdatePanel(items, threshold) {
-    removeDuplicatePanels();
+  function openSettingsWindow() {
+    try {
+      chrome.runtime.sendMessage({ type: 'OPEN_SETTINGS_POPUP' });
+    } catch {}
+  }
+
+  function createPanelShell(settings) {
+    const panel = document.createElement('aside');
+    panel.id = PANEL_ID;
+
+    const header = document.createElement('header');
+
+    const logo = document.createElement('img');
+    logo.className = 'apdf-logo';
+    logo.src = chrome.runtime.getURL('icons/icon48.png');
+    logo.alt = '';
+
+    const heading = document.createElement('div');
+    heading.className = 'apdf-heading';
+
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = 'Price drops';
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent =
+      `≥${settings.threshold}% AND ≥${fmtMoney(settings.minDollarDrop)}`;
+
+    heading.append(title, meta);
+
+    const headerActions = document.createElement('div');
+    headerActions.className = 'header-actions';
+
+    const gear = document.createElement('button');
+    gear.className = 'icon-button';
+    gear.type = 'button';
+    gear.title = 'Settings';
+    gear.setAttribute('aria-label', 'Settings');
+    gear.textContent = '⚙';
+    gear.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openSettingsWindow();
+    });
+
+    const close = document.createElement('button');
+    close.className = 'icon-button';
+    close.type = 'button';
+    close.title = 'Close';
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.addEventListener('click', () => panel.remove());
+
+    headerActions.append(gear, close);
+    header.append(logo, heading, headerActions);
+
+    const content = document.createElement('div');
+    content.className = 'content';
+
+    panel.append(header, content);
+    document.documentElement.appendChild(panel);
+
+    return panel;
+  }
+
+  function updatePanel(items, settings, { allowCreate }) {
     let panel = document.getElementById(PANEL_ID);
+
+    // The panel can be created once per document load. Mutation rescans may update an
+    // existing panel. If the user closes it, it remains closed until the page refreshes.
+    if (!panel && (!allowCreate || panelHasAppearedThisPage)) return;
+
     if (!panel) {
-      panel = document.createElement('div');
-      panel.id = PANEL_ID;
+      panel = createPanelShell(settings);
+      panelHasAppearedThisPage = true;
+    }
 
-      const header = document.createElement('header');
-
-      const left = document.createElement('div');
-      const title = document.createElement('div');
-      title.className = 'title';
-      title.textContent = 'Price drops';
-
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      meta.textContent = `Showing items with ≥${threshold}% decrease`;
-
-      left.appendChild(title);
-      left.appendChild(meta);
-
-      const right = document.createElement('div');
-      const closeBtn = document.createElement('button');
-      closeBtn.textContent = 'Close';
-      closeBtn.addEventListener('click', () => panel.remove());
-      right.appendChild(closeBtn);
-
-      header.appendChild(left);
-      header.appendChild(right);
-
-      const content = document.createElement('div');
-      content.className = 'content';
-
-      panel.appendChild(header);
-      panel.appendChild(content);
-      document.documentElement.appendChild(panel);
-    } else {
-      const meta = panel.querySelector('.meta');
-      if (meta) meta.textContent = `Showing items with ≥${threshold}% decrease`;
+    const meta = panel.querySelector('.meta');
+    if (meta) {
+      meta.textContent =
+        `${items.length} found · ≥${settings.threshold}% AND ≥${fmtMoney(settings.minDollarDrop)}`;
     }
 
     const content = panel.querySelector('.content');
@@ -206,144 +310,128 @@
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'No qualifying price drops found on this page.';
+      empty.textContent = 'No price decreases meet both thresholds.';
       content.appendChild(empty);
       return;
     }
 
-    items.sort((a, b) => b.pct - a.pct);
+    const sorted = [...items].sort((a, b) => {
+      if (b.pct !== a.pct) return b.pct - a.pct;
+      return b.dollarDrop - a.dollarDrop;
+    });
 
-    for (const it of items) {
+    for (const item of sorted) {
       const card = document.createElement('div');
       card.className = 'item';
 
       const name = document.createElement('div');
       name.className = 'name';
-      name.textContent = it.name;
+      name.textContent = item.name;
 
       const line = document.createElement('div');
       line.className = 'line';
 
-      const prices = document.createElement('div');
-      prices.textContent = `${fmtMoney(it.oldPrice)} → ${fmtMoney(it.newPrice)}`;
+      const prices = document.createElement('span');
+      prices.textContent = `${fmtMoney(item.oldPrice)} → ${fmtMoney(item.newPrice)}`;
 
-      const pct = document.createElement('div');
-      pct.className = 'pct';
-      pct.textContent = `−${it.pct.toFixed(1)}%`;
+      const savings = document.createElement('span');
+      savings.className = 'savings';
+      savings.textContent = `−${item.pct.toFixed(1)}% · −${fmtMoney(item.dollarDrop)}`;
 
-      line.appendChild(prices);
-      line.appendChild(pct);
+      line.append(prices, savings);
+      card.append(name, line);
 
-      card.appendChild(name);
-      card.appendChild(line);
+      const moveButton = findMoveToCartButton(item.savedRow);
+      if (moveButton) {
+        const actions = document.createElement('div');
+        actions.className = 'actions';
 
-      // Add-to-cart control (only shown when a matching Move/Add button exists on the page)
-      const moveBtn = findMoveToCartButton(it.cartElement) || findMoveToCartButton(it.element);
-      if (moveBtn) {
-        const addBtn = document.createElement('button');
-        addBtn.className = 'apdf-add';
-        addBtn.type = 'button';
-        addBtn.textContent = 'Add to cart';
-        addBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          try {
-            moveBtn.click();
-            addBtn.textContent = 'Added';
-            addBtn.disabled = true;
-            // Re-scan after Amazon updates the DOM
-            setTimeout(() => runScan({ forcePanel: true }), 900);
-          } catch {}
+        const add = document.createElement('button');
+        add.className = 'apdf-add';
+        add.type = 'button';
+        add.textContent = 'Add to cart';
+        add.addEventListener('click', (event) => {
+          event.stopPropagation();
+          moveButton.click();
+          add.disabled = true;
+          add.textContent = 'Adding…';
         });
-        card.appendChild(addBtn);
+
+        actions.appendChild(add);
+        card.appendChild(actions);
       }
 
-      card.style.cursor = 'pointer';
       card.addEventListener('click', () => {
-        const target = it.cartElement || it.element;
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          target.classList.add(HIGHLIGHT_CLASS);
-          target.animate([{ opacity: 1 }, { opacity: 0.75 }, { opacity: 1 }], { duration: 450 });
-        }
+        item.element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
 
       content.appendChild(card);
     }
   }
 
-  async function runScan({ forcePanel = true } = {}) {
-    const settings = { ...DEFAULTS, ...(await storageGet(DEFAULTS)) };
-    const threshold = Number(settings.threshold || DEFAULTS.threshold);
+  async function runScan({ allowPanelCreate = true } = {}) {
+    const settings = normalizeSettings({
+      ...DEFAULTS,
+      ...(await storageGet(DEFAULTS))
+    });
 
-    let all = scanFromImportantMessages();
-    if (!all.length) all = scanViaFallbackText();
+    let candidates = findImportantMessageLines();
+    if (!candidates.length) candidates = findFallbackLines();
 
-    const qualifying = all.filter(it => it.pct >= threshold);
+    // AND rule: both thresholds must be met. Increases can never qualify.
+    const qualifying = candidates.filter((item) => qualifies(item, settings));
 
-    document.querySelectorAll('.' + HIGHLIGHT_CLASS).forEach(el => el.classList.remove(HIGHLIGHT_CLASS));
-    document.querySelectorAll('.apdf-highlight-link').forEach(el => el.classList.remove('apdf-highlight-link'));
+    decorateQualifyingItems(qualifying);
+    updatePanel(qualifying, settings, { allowCreate: allowPanelCreate });
 
-    for (const it of qualifying) {
-      if (it.element) {
-        // Highlight the specific text (usually the product link) when possible
-        const a = it.element.querySelector('a');
-        if (a) a.classList.add('apdf-highlight-link');
-        it.element.classList.add(HIGHLIGHT_CLASS);
-      }
-      if (it.asin) {
-        const cartEl = highlightMatchingCartItemByAsin(it.asin);
-        if (cartEl) {
-          // Highlight the cart row and its title link for visibility
-          cartEl.classList.add(HIGHLIGHT_CLASS);
-          const titleLink = cartEl.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]');
-          if (titleLink) titleLink.classList.add('apdf-highlight-link');
-          it.cartElement = cartEl;
-        }
-      }
-    }
-
-    if (forcePanel) createOrUpdatePanel(qualifying, threshold);
-
-    return { scanned: all.length, qualifying: qualifying.length, threshold };
+    return {
+      scanned: candidates.length,
+      qualifying: qualifying.length,
+      threshold: settings.threshold,
+      minDollarDrop: settings.minDollarDrop
+    };
   }
 
   async function init() {
-    const settings = { ...DEFAULTS, ...(await storageGet(DEFAULTS)) };
-    if (settings.autoHighlight) runScan({ forcePanel: true });
-
-    const obs = new MutationObserver(() => {
-  // Prevent duplicate injections from creating duplicate panels/observers
-  if (window.__apdfAlreadyLoaded) return;
-  window.__apdfAlreadyLoaded = true;
-      clearTimeout(init._t);
-      init._t = setTimeout(() => {
-  // Prevent duplicate injections from creating duplicate panels/observers
-  if (window.__apdfAlreadyLoaded) return;
-  window.__apdfAlreadyLoaded = true;
-        storageGet(DEFAULTS).then(s => {
-          if (s.autoHighlight) runScan({ forcePanel: true });
-        });
-      }, 600);
+    const settings = normalizeSettings({
+      ...DEFAULTS,
+      ...(await storageGet(DEFAULTS))
     });
-    obs.observe(document.body, { childList: true, subtree: true });
+
+    if (settings.autoHighlight) {
+      await runScan({ allowPanelCreate: true });
+    }
+
+    // Amazon updates the cart DOM dynamically. Rescan highlights, but never recreate
+    // a panel the user already closed during this page load.
+    const observer = new MutationObserver(() => {
+      clearTimeout(rescanTimer);
+      rescanTimer = setTimeout(() => {
+        storageGet(DEFAULTS).then((stored) => {
+          const current = normalizeSettings({ ...DEFAULTS, ...stored });
+          if (current.autoHighlight) {
+            runScan({ allowPanelCreate: false });
+          }
+        });
+      }, 700);
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg?.type) return;
 
     if (msg.type === 'APDF_SCAN') {
-      runScan({ forcePanel: true }).then((summary) => {
-        sendResponse({ ok: true, ...summary });
-      }).catch((err) => {
-        sendResponse({ ok: false, error: String(err) });
-      });
-      return true; // async response
+      runScan({ allowPanelCreate: true })
+        .then((summary) => sendResponse({ ok: true, ...summary }))
+        .catch((error) => sendResponse({ ok: false, error: String(error) }));
+      return true;
     }
 
     if (msg.type === 'APDF_CLEAR') {
-      clearHighlights();
+      clearHighlights({ removePanel: true });
       sendResponse({ ok: true });
-      return;
     }
   });
 
