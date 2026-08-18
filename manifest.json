@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Amazon Price Drop Finder (\u226510%)",
-  "version": "1.09",
-  "description": "On Amazon cart/saved items pages, highlights items that dropped by at least a chosen percentage and lists them in a panel.",
+  "name": "Amazon Price Drop Finder (≥10%)",
+  "version": "1.10",
+  "description": "Highlights Amazon cart and Saved for later items only when both percentage and minimum-dollar price-drop thresholds are met.",
   "permissions": [
     "activeTab",
     "scripting",
