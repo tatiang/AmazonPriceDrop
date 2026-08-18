@@ -1,45 +1,32 @@
-Amazon Price Drop Finder (≥10%) — Chrome Extension v1.04
-
-What's new in v1.04
-- Adds a dedicated parser for Amazon's "Important messages about items in your Cart" box (the bullet list of price changes).
-- Attempts to also highlight the matching cart line-item by ASIN when possible.
+Amazon Price Drop Finder — Chrome Extension v1.10
 
 What it does
-- On Amazon Cart / Saved Items pages, finds price-change lines like:
-    "<Item> has decreased from $X to $Y"
-  and calculates the percent drop.
-- Highlights any item with a drop ≥ your threshold (default 10%)
-- Shows a floating panel listing qualifying items, sorted by biggest % drop.
-- Click an item in the panel to scroll to it.
+- Reads Amazon Cart / Saved for later price-change messages.
+- Considers price DECREASES only.
+- Highlights an item only when BOTH user thresholds are met:
+  1. Minimum percentage decrease
+  2. Minimum dollar decrease
+- Example: ≥10% AND ≥$2.00.
+- Shows qualifying items in a compact floating panel.
+- Provides Add to cart when Amazon exposes a Move/Add-to-cart control for the Saved-for-later item.
+- The floating panel appears at most once per page load. If closed, it stays closed until refresh.
+- The gear in the floating panel opens the extension settings popup.
+- Settings remain in the extension popup; there is no separate options page.
 
-Install / Update (Chrome)
-1) Unzip this folder somewhere permanent.
-2) Go to chrome://extensions
-3) Enable "Developer mode"
-4) Click "Load unpacked" and select this folder.
+v1.10 changes
+- Added minimum dollar decrease setting with AND logic.
+- Reworked highlighting so only exact qualifying decrease lines are decorated.
+- Explicitly excludes increases and flat price changes.
+- Improved popup and floating-panel contrast/readability.
+- Fixed duplicate/reappearing panel behavior.
+- Fixed panel icon and gear implementation.
+- Improved Saved-for-later Add to cart lookup.
+- Cleaned malformed/duplicated popup markup from v1.09.
 
-Site access (important)
-- Ensure the extension can read/change Amazon:
-  Extensions (puzzle) → ⋯ next to this extension → "This can read and change site data" → "On amazon.com"
-  OR chrome://extensions → Details → Site access.
-
-Notes
-- Amazon’s cart markup varies. v1.04 is optimized for the “Important messages” box and should be much more reliable than text scanning alone.
-
-
-v1.06
-- Improves visible highlighting by applying a background/underline to product link text (not just an outline on the container).
-
-
-v1.08
-- Never highlights increases (only true decreases over threshold).
-- Prevents duplicate panels/observers on the same page.
-- Adds 'Add to cart' button in the Price drops panel when a matching Move/Add button exists.
-- Adds gear icon in popup to open Settings (options page).
-
-
-v1.09
-- Settings live inside the extension popup.
-- Gear icon moved to the in-page panel only; opens settings popup window.
-- Adds extension icon to both the popup and the in-page panel.
-- Removes the Amazon compatibility hint text.
+Install locally
+1. Unzip this folder.
+2. Open chrome://extensions
+3. Enable Developer mode.
+4. Remove/reload the previous unpacked build.
+5. Click Load unpacked and select this folder.
+6. Refresh the Amazon cart page.
